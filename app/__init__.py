@@ -1,0 +1,1 @@
+"""VidKit FastAPI backend."""
