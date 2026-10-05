@@ -23,6 +23,7 @@ from app.routers import (
     files,
     gif,
     health,
+    image,
     jobs,
     merge,
     resize,
@@ -113,5 +114,6 @@ app.include_router(merge.router)
 app.include_router(gif.router)
 app.include_router(rotate.router)
 app.include_router(resize.router)
+app.include_router(image.router)
 app.include_router(jobs.router)
 app.include_router(files.router)

@@ -45,6 +45,20 @@ ALLOWED_UPLOAD_MIMES = {
     "application/octet-stream",
 }
 
+ALLOWED_IMAGE_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".avif",
+    ".gif",
+    ".bmp",
+    ".tif",
+    ".tiff",
+}
+ALLOWED_PDF_EXTENSIONS = {".pdf"}
+ALLOWED_IMAGE_OR_PDF_EXTENSIONS = ALLOWED_IMAGE_EXTENSIONS | ALLOWED_PDF_EXTENSIONS
+
 _UNSAFE_FILENAME = re.compile(r"[^\w.\-]+", re.UNICODE)
 
 
@@ -97,14 +111,32 @@ def sanitize_filename(name: str, fallback: str = "file") -> str:
     return base[:200]
 
 
-def validate_upload_extension(filename: str) -> str:
-    """Validate and return the lowercase extension including the dot."""
-    safe = sanitize_filename(filename)
-    lower = safe.lower()
-    for ext in ALLOWED_UPLOAD_EXTENSIONS:
+def _match_extension(filename: str, allowed: set[str]) -> str | None:
+    lower = sanitize_filename(filename).lower()
+    for ext in allowed:
         if lower.endswith(ext):
             return ext
+    return None
+
+
+def validate_upload_extension(filename: str) -> str:
+    """Validate and return the lowercase video extension including the dot."""
+    ext = _match_extension(filename, ALLOWED_UPLOAD_EXTENSIONS)
+    if ext:
+        return ext
     raise AppError(
         "UNSUPPORTED_FORMAT",
-        "Unsupported file type. Allowed: MP4, MOV, MKV, WEBM.",
+        "Unsupported file type. Allowed: MP4, MOV, MKV, WEBM, AVI.",
     )
+
+
+def validate_image_extension(filename: str, *, allow_pdf: bool = False) -> str:
+    """Validate and return the lowercase image (or PDF) extension."""
+    allowed = ALLOWED_IMAGE_OR_PDF_EXTENSIONS if allow_pdf else ALLOWED_IMAGE_EXTENSIONS
+    ext = _match_extension(filename, allowed)
+    if ext:
+        return ext
+    kinds = "JPG, PNG, WEBP, AVIF, GIF, BMP, TIFF"
+    if allow_pdf:
+        kinds += ", PDF"
+    raise AppError("UNSUPPORTED_FORMAT", f"Unsupported file type. Allowed: {kinds}.")

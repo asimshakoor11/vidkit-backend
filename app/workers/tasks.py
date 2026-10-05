@@ -23,6 +23,15 @@ from app.services import rotate as rotate_service
 from app.services import trim as trim_service
 from app.services.ffmpeg import FfmpegProcess
 from app.services.ffprobe import probe
+from app.services.image import compress as img_compress
+from app.services.image import convert as img_convert
+from app.services.image import exif as img_exif
+from app.services.image import favicon as img_favicon
+from app.services.image import meme as img_meme
+from app.services.image import pdf as img_pdf
+from app.services.image import resize as img_resize
+from app.services.image import watermark as img_watermark
+from app.services.image.io import mime_for_ext
 from app.services.job_service import add_job_file, update_job_progress
 from app.services.splitter import SplitProcess, split_video
 from app.services.storage import job_output_dir, job_upload_dir
@@ -41,7 +50,7 @@ def get_split_tracker(job_id: str) -> FfmpegProcess | None:
 
 def _mime_for_path(path: Path) -> str:
     ext = path.suffix.lower()
-    return {
+    mapped = {
         ".mp4": "video/mp4",
         ".mov": "video/quicktime",
         ".webm": "video/webm",
@@ -51,7 +60,10 @@ def _mime_for_path(path: Path) -> str:
         ".m4a": "audio/mp4",
         ".wav": "audio/wav",
         ".gif": "image/gif",
-    }.get(ext, "application/octet-stream")
+    }.get(ext)
+    if mapped:
+        return mapped
+    return mime_for_ext(ext)
 
 
 async def _run_single_output_job(
@@ -589,3 +601,230 @@ async def run_resize_job(
         )
 
     await _run_single_output_job(job_id, work)
+
+
+async def _run_image_job(
+    job_id: str,
+    work: Callable[[Callable[[float, str], None]], Path | list[Path]],
+) -> None:
+    """Shared orchestrator for Pillow/image tools (single or multi output)."""
+    db = SessionLocal()
+    last_write = 0.0
+
+    def on_progress(percent: float, stage: str) -> None:
+        nonlocal last_write
+        now = time.monotonic()
+        if now - last_write < 0.5 and percent < 99:
+            return
+        last_write = now
+        update_job_progress(
+            db,
+            job_id,
+            progress=int(percent),
+            stage=stage,
+            status="processing",
+        )
+
+    try:
+        update_job_progress(db, job_id, status="processing", stage="processing", progress=1)
+        result = await asyncio.to_thread(work, on_progress)
+
+        if runner.is_cancelled(job_id):
+            update_job_progress(db, job_id, status="cancelled", stage="cancelled", progress=0)
+            return
+
+        paths = result if isinstance(result, list) else [result]
+        for index, path in enumerate(paths, start=1):
+            width = height = None
+            if path.suffix.lower() in {
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".webp",
+                ".avif",
+                ".gif",
+                ".bmp",
+                ".tif",
+                ".tiff",
+                ".ico",
+            }:
+                try:
+                    from app.services.image.io import open_image
+
+                    with open_image(path) as im:
+                        width, height = im.width, im.height
+                except Exception:  # noqa: BLE001
+                    pass
+
+            add_job_file(
+                db,
+                job_id=job_id,
+                role="output",
+                absolute_path=path,
+                original_name=path.name,
+                part_index=index,
+                mime_type=_mime_for_path(path),
+                width=width,
+                height=height,
+            )
+
+        update_job_progress(db, job_id, status="completed", stage="packaging", progress=100)
+        logger.info("image_job_completed", job_id=job_id, outputs=len(paths))
+    except AppError as exc:
+        update_job_progress(
+            db,
+            job_id,
+            status="failed",
+            stage="failed",
+            error_code=exc.code,
+            error_message=exc.message,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("image_job_failed", job_id=job_id)
+        update_job_progress(
+            db,
+            job_id,
+            status="failed",
+            stage="failed",
+            error_code="INTERNAL_ERROR",
+            error_message=str(exc) or "Processing failed",
+        )
+    finally:
+        db.close()
+
+
+async def run_img_compress_job(job_id: str, input_path: Path, preset: str) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return img_compress.compress_image(input_path, out_dir, preset, on_progress)
+
+    await _run_image_job(job_id, work)
+
+
+async def run_img_target_job(job_id: str, input_path: Path, kb: int) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return img_compress.compress_to_kb(input_path, out_dir, kb, on_progress)
+
+    await _run_image_job(job_id, work)
+
+
+async def run_img_convert_job(job_id: str, input_path: Path, fmt: str) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return img_convert.convert_image(input_path, out_dir, fmt, on_progress)
+
+    await _run_image_job(job_id, work)
+
+
+async def run_img_resize_job(
+    job_id: str,
+    input_path: Path,
+    *,
+    width: int | None,
+    height: int | None,
+    mode: str,
+    crop_x: int | None,
+    crop_y: int | None,
+    crop_w: int | None,
+    crop_h: int | None,
+) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return img_resize.resize_image(
+            input_path,
+            out_dir,
+            width=width,
+            height=height,
+            mode=mode,
+            crop_x=crop_x,
+            crop_y=crop_y,
+            crop_w=crop_w,
+            crop_h=crop_h,
+            progress_callback=on_progress,
+        )
+
+    await _run_image_job(job_id, work)
+
+
+async def run_img_pdf_job(job_id: str, input_path: Path, direction: str) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> list[Path]:
+        return img_pdf.convert_pdf(
+            input_path, out_dir, direction=direction, progress_callback=on_progress
+        )
+
+    await _run_image_job(job_id, work)
+
+
+async def run_img_watermark_job(
+    job_id: str,
+    input_path: Path,
+    *,
+    text: str | None,
+    mark_path: Path | None,
+    position: str,
+    opacity: float,
+    scale: float,
+) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return img_watermark.add_watermark(
+            input_path,
+            out_dir,
+            text=text,
+            mark_path=mark_path,
+            position=position,
+            opacity=opacity,
+            scale=scale,
+            progress_callback=on_progress,
+        )
+
+    await _run_image_job(job_id, work)
+
+
+async def run_img_meme_job(
+    job_id: str,
+    input_path: Path,
+    *,
+    top: str,
+    bottom: str,
+    font_size: int | None,
+) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return img_meme.make_meme(
+            input_path,
+            out_dir,
+            top=top,
+            bottom=bottom,
+            font_size=font_size,
+            progress_callback=on_progress,
+        )
+
+    await _run_image_job(job_id, work)
+
+
+async def run_img_exif_job(job_id: str, input_path: Path, mode: str) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return img_exif.process_exif(input_path, out_dir, mode=mode, progress_callback=on_progress)
+
+    await _run_image_job(job_id, work)
+
+
+async def run_img_favicon_job(job_id: str, input_path: Path) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> list[Path]:
+        return img_favicon.make_favicon(input_path, out_dir, progress_callback=on_progress)
+
+    await _run_image_job(job_id, work)

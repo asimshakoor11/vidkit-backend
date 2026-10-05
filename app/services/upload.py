@@ -9,7 +9,11 @@ from fastapi import UploadFile
 
 from app.core.config import get_settings
 from app.core.errors import AppError
-from app.core.security import sanitize_filename, validate_upload_extension
+from app.core.security import (
+    sanitize_filename,
+    validate_image_extension,
+    validate_upload_extension,
+)
 from app.services.ffprobe import ProbeInfo, probe
 from app.services.storage import job_upload_dir
 
@@ -24,6 +28,18 @@ class UploadedFile:
     original_name: str
     info: ProbeInfo
     content_type: str | None
+    index: int = 0
+
+
+@dataclass
+class ImageUpload:
+    """Saved image/PDF upload with basic dimensions."""
+
+    path: Path
+    original_name: str
+    content_type: str | None
+    width: int | None = None
+    height: int | None = None
     index: int = 0
 
 
@@ -105,3 +121,65 @@ async def save_uploads(
             )
         saved.append(item)
     return saved
+
+
+async def save_image_upload(
+    file: UploadFile,
+    job_id: str,
+    *,
+    allow_pdf: bool = False,
+    filename_stem: str = "input",
+    index: int = 0,
+    validate_open: bool = True,
+) -> ImageUpload:
+    """Stream an image (or PDF) upload; no ffprobe / duration checks."""
+    settings = get_settings()
+    original_name = sanitize_filename(file.filename or "image.png")
+    ext = validate_image_extension(original_name, allow_pdf=allow_pdf)
+
+    upload_dir = job_upload_dir(job_id)
+    dest = (
+        upload_dir / f"{filename_stem}{ext}"
+        if index == 0
+        else upload_dir / f"{filename_stem}_{index:02d}{ext}"
+    )
+
+    total = 0
+    try:
+        with dest.open("wb") as out:
+            while True:
+                chunk = await file.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > settings.max_upload_bytes:
+                    out.close()
+                    dest.unlink(missing_ok=True)
+                    raise AppError(
+                        "FILE_TOO_LARGE",
+                        f"File exceeds the {settings.max_upload_mb} MB upload limit.",
+                    )
+                out.write(chunk)
+    finally:
+        await file.close()
+
+    width = height = None
+    if validate_open and ext != ".pdf":
+        from app.services.image.io import open_image
+
+        img = open_image(dest)
+        width, height = img.width, img.height
+        img.close()
+    elif ext == ".pdf" and validate_open:
+        # Light existence check — detailed open happens in the PDF service
+        if dest.stat().st_size < 5:
+            raise AppError("UNSUPPORTED_FORMAT", "Could not read this PDF file.")
+
+    return ImageUpload(
+        path=dest,
+        original_name=original_name,
+        content_type=file.content_type,
+        width=width,
+        height=height,
+        index=index,
+    )
