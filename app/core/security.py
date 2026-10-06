@@ -58,6 +58,9 @@ ALLOWED_IMAGE_EXTENSIONS = {
 }
 ALLOWED_PDF_EXTENSIONS = {".pdf"}
 ALLOWED_IMAGE_OR_PDF_EXTENSIONS = ALLOWED_IMAGE_EXTENSIONS | ALLOWED_PDF_EXTENSIONS
+ALLOWED_DOC_EXTENSIONS = {".docx"}
+ALLOWED_DOC_OR_PDF_EXTENSIONS = ALLOWED_DOC_EXTENSIONS | ALLOWED_PDF_EXTENSIONS
+ALLOWED_AUDIO_EXTENSIONS = {".mp3", ".wav", ".aac", ".m4a", ".flac", ".ogg", ".opus"}
 
 _UNSAFE_FILENAME = re.compile(r"[^\w.\-]+", re.UNICODE)
 
@@ -140,3 +143,30 @@ def validate_image_extension(filename: str, *, allow_pdf: bool = False) -> str:
     if allow_pdf:
         kinds += ", PDF"
     raise AppError("UNSUPPORTED_FORMAT", f"Unsupported file type. Allowed: {kinds}.")
+
+
+def validate_pdf_extension(filename: str) -> str:
+    """Validate and return the lowercase .pdf extension."""
+    ext = _match_extension(filename, ALLOWED_PDF_EXTENSIONS)
+    if ext:
+        return ext
+    raise AppError("UNSUPPORTED_FORMAT", "Unsupported file type. Allowed: PDF.")
+
+
+def validate_doc_extension(filename: str) -> str:
+    """Validate and return the lowercase .docx extension."""
+    ext = _match_extension(filename, ALLOWED_DOC_EXTENSIONS)
+    if ext:
+        return ext
+    raise AppError("UNSUPPORTED_FORMAT", "Unsupported file type. Allowed: DOCX.")
+
+
+def validate_audio_extension(filename: str) -> str:
+    """Validate and return the lowercase audio extension."""
+    ext = _match_extension(filename, ALLOWED_AUDIO_EXTENSIONS)
+    if ext:
+        return ext
+    raise AppError(
+        "UNSUPPORTED_FORMAT",
+        "Unsupported file type. Allowed: MP3, WAV, AAC, M4A, FLAC, OGG, OPUS.",
+    )

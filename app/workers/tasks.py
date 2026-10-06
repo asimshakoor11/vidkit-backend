@@ -33,6 +33,19 @@ from app.services.image import resize as img_resize
 from app.services.image import watermark as img_watermark
 from app.services.image.io import mime_for_ext
 from app.services.job_service import add_job_file, update_job_progress
+from app.services.pdf import annotate as pdf_annotate
+from app.services.pdf import compress as pdf_compress
+from app.services.pdf import convert as pdf_convert
+from app.services.pdf import merge as pdf_merge
+from app.services.pdf import ocr as pdf_ocr
+from app.services.pdf import secure as pdf_secure
+from app.services.pdf import split as pdf_split
+from app.services.audio import compress as aud_compress
+from app.services.audio import convert as aud_convert
+from app.services.audio import denoise as aud_denoise
+from app.services.audio import merge as aud_merge
+from app.services.audio import separate as aud_separate
+from app.services.audio import trim as aud_trim
 from app.services.splitter import SplitProcess, split_video
 from app.services.storage import job_output_dir, job_upload_dir
 from app.workers.runner import runner
@@ -59,7 +72,17 @@ def _mime_for_path(path: Path) -> str:
         ".mp3": "audio/mpeg",
         ".m4a": "audio/mp4",
         ".wav": "audio/wav",
+        ".flac": "audio/flac",
+        ".ogg": "audio/ogg",
+        ".opus": "audio/opus",
+        ".aac": "audio/aac",
         ".gif": "image/gif",
+        ".pdf": "application/pdf",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
     }.get(ext)
     if mapped:
         return mapped
@@ -603,11 +626,11 @@ async def run_resize_job(
     await _run_single_output_job(job_id, work)
 
 
-async def _run_image_job(
+async def _run_file_job(
     job_id: str,
     work: Callable[[Callable[[float, str], None]], Path | list[Path]],
 ) -> None:
-    """Shared orchestrator for Pillow/image tools (single or multi output)."""
+    """Shared orchestrator for image/PDF tools (single or multi output)."""
     db = SessionLocal()
     last_write = 0.0
 
@@ -669,7 +692,7 @@ async def _run_image_job(
             )
 
         update_job_progress(db, job_id, status="completed", stage="packaging", progress=100)
-        logger.info("image_job_completed", job_id=job_id, outputs=len(paths))
+        logger.info("file_job_completed", job_id=job_id, outputs=len(paths))
     except AppError as exc:
         update_job_progress(
             db,
@@ -680,7 +703,7 @@ async def _run_image_job(
             error_message=exc.message,
         )
     except Exception as exc:  # noqa: BLE001
-        logger.exception("image_job_failed", job_id=job_id)
+        logger.exception("file_job_failed", job_id=job_id)
         update_job_progress(
             db,
             job_id,
@@ -691,6 +714,10 @@ async def _run_image_job(
         )
     finally:
         db.close()
+
+
+# Back-compat alias for image workers
+_run_image_job = _run_file_job
 
 
 async def run_img_compress_job(job_id: str, input_path: Path, preset: str) -> None:
@@ -828,3 +855,272 @@ async def run_img_favicon_job(job_id: str, input_path: Path) -> None:
         return img_favicon.make_favicon(input_path, out_dir, progress_callback=on_progress)
 
     await _run_image_job(job_id, work)
+
+
+# --- PDF / document jobs -------------------------------------------------
+
+
+async def run_pdf_merge_job(job_id: str, paths: list[Path]) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return pdf_merge.merge_pdfs(paths, out_dir, progress_callback=on_progress)
+
+    await _run_file_job(job_id, work)
+
+
+async def run_pdf_split_job(
+    job_id: str, input_path: Path, mode: str, ranges: str | None
+) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> list[Path]:
+        return pdf_split.split_pdf(
+            input_path, out_dir, mode=mode, ranges=ranges, progress_callback=on_progress
+        )
+
+    await _run_file_job(job_id, work)
+
+
+async def run_pdf_compress_job(job_id: str, input_path: Path, preset: str) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return pdf_compress.compress_pdf(input_path, out_dir, preset, progress_callback=on_progress)
+
+    await _run_file_job(job_id, work)
+
+
+async def run_pdf_to_word_job(job_id: str, input_path: Path) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return pdf_convert.pdf_to_word(input_path, out_dir, progress_callback=on_progress)
+
+    await _run_file_job(job_id, work)
+
+
+async def run_pdf_from_word_job(job_id: str, input_path: Path) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return pdf_convert.word_to_pdf(input_path, out_dir, progress_callback=on_progress)
+
+    await _run_file_job(job_id, work)
+
+
+async def run_pdf_to_excel_job(job_id: str, input_path: Path) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return pdf_convert.pdf_to_excel(input_path, out_dir, progress_callback=on_progress)
+
+    await _run_file_job(job_id, work)
+
+
+async def run_pdf_to_jpg_job(job_id: str, input_path: Path, dpi: int) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> list[Path]:
+        return pdf_convert.pdf_to_jpg(input_path, out_dir, dpi=dpi, progress_callback=on_progress)
+
+    await _run_file_job(job_id, work)
+
+
+async def run_pdf_from_jpg_job(job_id: str, paths: list[Path]) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return pdf_convert.jpg_to_pdf(paths, out_dir, progress_callback=on_progress)
+
+    await _run_file_job(job_id, work)
+
+
+async def run_pdf_rotate_job(job_id: str, input_path: Path, angle: str) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return pdf_secure.rotate_pdf(input_path, out_dir, angle, progress_callback=on_progress)
+
+    await _run_file_job(job_id, work)
+
+
+async def run_pdf_unlock_job(job_id: str, input_path: Path, password: str) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return pdf_secure.unlock_pdf(input_path, out_dir, password, progress_callback=on_progress)
+
+    await _run_file_job(job_id, work)
+
+
+async def run_pdf_protect_job(
+    job_id: str, input_path: Path, user_password: str, owner_password: str | None
+) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return pdf_secure.protect_pdf(
+            input_path,
+            out_dir,
+            user_password,
+            owner_password,
+            progress_callback=on_progress,
+        )
+
+    await _run_file_job(job_id, work)
+
+
+async def run_pdf_ocr_job(job_id: str, input_path: Path, lang: str) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return pdf_ocr.ocr_pdf(input_path, out_dir, lang=lang, progress_callback=on_progress)
+
+    await _run_file_job(job_id, work)
+
+
+async def run_pdf_esign_job(
+    job_id: str,
+    input_path: Path,
+    signature_path: Path,
+    *,
+    page: int,
+    position: str,
+    scale: float,
+) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return pdf_annotate.esign_pdf(
+            input_path,
+            out_dir,
+            signature_path,
+            page=page,
+            position=position,
+            scale=scale,
+            progress_callback=on_progress,
+        )
+
+    await _run_file_job(job_id, work)
+
+
+async def run_pdf_watermark_job(
+    job_id: str,
+    input_path: Path,
+    *,
+    text: str,
+    opacity: float,
+    angle: int,
+) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return pdf_annotate.watermark_pdf(
+            input_path,
+            out_dir,
+            text=text,
+            opacity=opacity,
+            angle=angle,
+            progress_callback=on_progress,
+        )
+
+    await _run_file_job(job_id, work)
+
+
+async def run_pdf_pagenum_job(
+    job_id: str,
+    input_path: Path,
+    *,
+    position: str,
+    start: int,
+    format_str: str,
+) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return pdf_annotate.add_page_numbers(
+            input_path,
+            out_dir,
+            position=position,
+            start=start,
+            format_str=format_str,
+            progress_callback=on_progress,
+        )
+
+    await _run_file_job(job_id, work)
+
+
+# --- Audio jobs -----------------------------------------------------------
+
+
+async def run_audio_convert_job(
+    job_id: str, input_path: Path, fmt: str, bitrate: str
+) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(tracker: FfmpegProcess, on_progress: Callable[[float, str], None]) -> Path:
+        return aud_convert.convert_audio(
+            input_path, out_dir, fmt, bitrate, progress_callback=on_progress, tracker=tracker
+        )
+
+    await _run_single_output_job(job_id, work)
+
+
+async def run_audio_compress_job(job_id: str, input_path: Path, preset: str) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(tracker: FfmpegProcess, on_progress: Callable[[float, str], None]) -> Path:
+        return aud_compress.compress_audio(
+            input_path, out_dir, preset, progress_callback=on_progress, tracker=tracker
+        )
+
+    await _run_single_output_job(job_id, work)
+
+
+async def run_audio_trim_job(
+    job_id: str, input_path: Path, start: float, end: float, mode: str
+) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(tracker: FfmpegProcess, on_progress: Callable[[float, str], None]) -> Path:
+        return aud_trim.trim_audio(
+            input_path,
+            out_dir,
+            start,
+            end,
+            mode,
+            progress_callback=on_progress,
+            tracker=tracker,
+        )
+
+    await _run_single_output_job(job_id, work)
+
+
+async def run_audio_merge_job(job_id: str, paths: list[Path]) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(tracker: FfmpegProcess, on_progress: Callable[[float, str], None]) -> Path:
+        return aud_merge.merge_audio(paths, out_dir, progress_callback=on_progress, tracker=tracker)
+
+    await _run_single_output_job(job_id, work)
+
+
+async def run_audio_denoise_job(job_id: str, input_path: Path, preset: str) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(tracker: FfmpegProcess, on_progress: Callable[[float, str], None]) -> Path:
+        return aud_denoise.denoise_audio(
+            input_path, out_dir, preset, progress_callback=on_progress, tracker=tracker
+        )
+
+    await _run_single_output_job(job_id, work)
+
+
+async def run_audio_separate_job(job_id: str, input_path: Path) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> list[Path]:
+        return aud_separate.separate_vocals(input_path, out_dir, progress_callback=on_progress)
+
+    await _run_file_job(job_id, work)

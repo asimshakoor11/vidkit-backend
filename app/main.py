@@ -17,6 +17,7 @@ from app.core.errors import error_body, register_exception_handlers
 from app.core.logging import get_logger, setup_logging
 from app.core.rate_limit import limiter
 from app.routers import (
+    audio,
     compress,
     convert,
     extract,
@@ -26,6 +27,7 @@ from app.routers import (
     image,
     jobs,
     merge,
+    pdf,
     resize,
     rotate,
     split,
@@ -115,5 +117,7 @@ app.include_router(gif.router)
 app.include_router(rotate.router)
 app.include_router(resize.router)
 app.include_router(image.router)
+app.include_router(pdf.router)
+app.include_router(audio.router)
 app.include_router(jobs.router)
 app.include_router(files.router)

@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     storage_dir: Path = Path("./storage")
     ffmpeg_path: str = "ffmpeg"
     ffprobe_path: str = "ffprobe"
+    gs_path: str = "gs"
+    libreoffice_path: str = "soffice"
+    tesseract_path: str = "tesseract"
+    poppler_path: str = ""
     ytdlp_cookies_file: str = ""
     max_upload_mb: int = 4096
     max_video_duration_min: int = 180
@@ -31,6 +35,8 @@ class Settings(BaseSettings):
     file_ttl_minutes: int = 60
     rate_limit_info: str = "10/minute"
     rate_limit_jobs: str = "5/hour"
+    pdf_convert_timeout_sec: int = 300
+    audio_separate_timeout_sec: int = 900
 
     @property
     def cors_origin_list(self) -> list[str]:
