@@ -31,6 +31,7 @@ from app.routers import (
     resize,
     rotate,
     split,
+    tools,
     trim,
     video,
 )
@@ -119,5 +120,6 @@ app.include_router(resize.router)
 app.include_router(image.router)
 app.include_router(pdf.router)
 app.include_router(audio.router)
+app.include_router(tools.router)
 app.include_router(jobs.router)
 app.include_router(files.router)

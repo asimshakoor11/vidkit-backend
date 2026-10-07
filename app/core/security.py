@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
+import socket
 from urllib.parse import urlparse
 
 from app.core.errors import AppError
@@ -103,6 +105,66 @@ def detect_platform_from_url(url: str) -> str:
         "UNSUPPORTED_PLATFORM",
         "Unsupported platform. Try a YouTube, TikTok, Instagram or Facebook link.",
     )
+
+
+def validate_public_http_url(url: str) -> str:
+    """
+    Validate a shorten/redirect target: http(s) only, no localhost/private IPs.
+    Returns the stripped URL.
+    """
+    raw = (url or "").strip()
+    try:
+        parsed = urlparse(raw)
+    except Exception as exc:  # noqa: BLE001
+        raise AppError("INVALID_URL", "Please enter a valid URL.") from exc
+
+    if parsed.scheme not in {"http", "https"}:
+        raise AppError("INVALID_URL", "Only http and https URLs are supported.")
+    host = parsed.hostname
+    if not host:
+        raise AppError("INVALID_URL", "Please enter a valid URL.")
+
+    lowered = host.lower().rstrip(".")
+    if lowered in {"localhost", "127.0.0.1", "::1"} or lowered.endswith(".localhost"):
+        raise AppError("INVALID_URL", "This URL is not allowed.")
+    if lowered.startswith("127.") or lowered.endswith(".local"):
+        raise AppError("INVALID_URL", "This URL is not allowed.")
+
+    # Block literal IPs that are private / reserved
+    try:
+        ip = ipaddress.ip_address(lowered)
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            raise AppError("INVALID_URL", "This URL is not allowed.")
+    except ValueError:
+        # Hostname — resolve and reject private answers (best-effort SSRF guard)
+        try:
+            infos = socket.getaddrinfo(lowered, None)
+        except socket.gaierror:
+            infos = []
+        for info in infos:
+            addr = info[4][0]
+            try:
+                ip = ipaddress.ip_address(addr)
+            except ValueError:
+                continue
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_reserved
+                or ip.is_multicast
+                or ip.is_unspecified
+            ):
+                raise AppError("INVALID_URL", "This URL is not allowed.")
+
+    return raw
 
 
 def sanitize_filename(name: str, fallback: str = "file") -> str:

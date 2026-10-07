@@ -1,11 +1,15 @@
-"""APScheduler cleanup for expired jobs and files."""
+"""APScheduler cleanup for expired jobs and short URLs."""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from sqlalchemy import delete
 
 from app.core.database import SessionLocal
 from app.core.logging import get_logger
+from app.models.short_url import ShortUrl
 from app.services.job_service import expire_jobs
 
 logger = get_logger(__name__)
@@ -14,12 +18,18 @@ scheduler = AsyncIOScheduler()
 
 
 def cleanup_expired_jobs() -> None:
-    """Delete expired job files and mark jobs expired."""
+    """Delete expired job files and mark jobs expired; purge expired short URLs."""
     db = SessionLocal()
     try:
         count = expire_jobs(db)
         if count:
             logger.info("expired_jobs", count=count)
+        now = datetime.now(timezone.utc)
+        result = db.execute(delete(ShortUrl).where(ShortUrl.expires_at < now))
+        db.commit()
+        deleted = result.rowcount or 0
+        if deleted:
+            logger.info("expired_short_urls", count=deleted)
     finally:
         db.close()
 

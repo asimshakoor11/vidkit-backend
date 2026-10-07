@@ -297,6 +297,43 @@ async def save_doc_upload(
     )
 
 
+ALLOWED_MD_EXTENSIONS = {".md", ".markdown", ".txt"}
+
+
+async def save_markdown_upload(
+    file: UploadFile,
+    job_id: str,
+    *,
+    filename_stem: str = "input",
+    index: int = 0,
+) -> ImageUpload:
+    """Stream a Markdown/text upload into the job upload dir."""
+    original_name = sanitize_filename(file.filename or "input.md")
+    lower = original_name.lower()
+    ext = None
+    for candidate in ALLOWED_MD_EXTENSIONS:
+        if lower.endswith(candidate):
+            ext = candidate
+            break
+    if not ext:
+        raise AppError("UNSUPPORTED_FORMAT", "Upload a .md, .markdown, or .txt file.")
+    upload_dir = job_upload_dir(job_id)
+    dest = (
+        upload_dir / f"{filename_stem}{ext}"
+        if index == 0
+        else upload_dir / f"{filename_stem}_{index:02d}{ext}"
+    )
+    await _stream_upload(file, dest)
+    if dest.stat().st_size < 1:
+        raise AppError("UNSUPPORTED_FORMAT", "Markdown file is empty.")
+    return ImageUpload(
+        path=dest,
+        original_name=original_name,
+        content_type=file.content_type or "text/markdown",
+        index=index,
+    )
+
+
 @dataclass
 class AudioUpload:
     """Saved audio upload with probe duration."""

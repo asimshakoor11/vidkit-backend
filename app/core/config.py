@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     rate_limit_jobs: str = "5/hour"
     pdf_convert_timeout_sec: int = 300
     audio_separate_timeout_sec: int = 900
+    pandoc_path: str = "pandoc"
+    markdown_timeout_sec: int = 120
+    public_base_url: str = "http://localhost:8000"
+    short_url_ttl_days: int = 30
 
     @property
     def cors_origin_list(self) -> list[str]:

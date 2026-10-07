@@ -48,6 +48,7 @@ from app.services.audio import separate as aud_separate
 from app.services.audio import trim as aud_trim
 from app.services.splitter import SplitProcess, split_video
 from app.services.storage import job_output_dir, job_upload_dir
+from app.services.tools import markdown as md_convert
 from app.workers.runner import runner
 
 logger = get_logger(__name__)
@@ -83,6 +84,8 @@ def _mime_for_path(path: Path) -> str:
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
         ".png": "image/png",
+        ".html": "text/html",
+        ".htm": "text/html",
     }.get(ext)
     if mapped:
         return mapped
@@ -1122,5 +1125,16 @@ async def run_audio_separate_job(job_id: str, input_path: Path) -> None:
 
     def work(on_progress: Callable[[float, str], None]) -> list[Path]:
         return aud_separate.separate_vocals(input_path, out_dir, progress_callback=on_progress)
+
+    await _run_file_job(job_id, work)
+
+
+async def run_md_convert_job(job_id: str, input_path: Path, target: str) -> None:
+    out_dir = job_output_dir(job_id)
+
+    def work(on_progress: Callable[[float, str], None]) -> Path:
+        return md_convert.convert_markdown(
+            input_path, out_dir, target, progress_callback=on_progress
+        )
 
     await _run_file_job(job_id, work)

@@ -1,6 +1,6 @@
 # VidKit Backend
 
-FastAPI backend for [VidKit](../PROJECT.md) video, image, PDF, and audio tools.
+FastAPI backend for [VidKit](../PROJECT.md) video, image, PDF, audio, and developer utility tools.
 
 > **Legal notice:** Only download or process content you own or have permission to use.
 > Respect platform Terms of Service and copyright law.
@@ -16,6 +16,7 @@ FastAPI backend for [VidKit](../PROJECT.md) video, image, PDF, and audio tools.
   - **Poppler** — PDF → JPG / OCR rendering (`pdf2image`)
   - **Tesseract OCR** — searchable PDF OCR
 - Optional for vocal remover: **demucs** (`pip install demucs`) — first run downloads model weights; CPU works, GPU recommended
+- Optional for Markdown convert: **Pandoc** on `PATH` (PDF also needs a PDF engine such as pdflatex)
 
 ### Install FFmpeg (Windows)
 
@@ -46,9 +47,22 @@ LIBREOFFICE_PATH=soffice
 TESSERACT_PATH=tesseract
 POPPLER_PATH=C:\path\to\poppler\Library\bin
 AUDIO_SEPARATE_TIMEOUT_SEC=900
+PANDOC_PATH=pandoc
+MARKDOWN_TIMEOUT_SEC=120
+PUBLIC_BASE_URL=http://localhost:8000
+SHORT_URL_TTL_DAYS=30
 ```
 
 On Windows Ghostscript is often `gswin64c` — the backend also looks for that automatically.
+
+### Install Pandoc (Windows)
+
+```powershell
+winget install JohnMacFarlane.Pandoc
+pandoc -v
+```
+
+PDF output needs a Pandoc PDF engine (e.g. a LaTeX distribution). HTML conversion works with Pandoc alone.
 
 ## Setup
 
@@ -79,6 +93,7 @@ API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 
 - PDF endpoints: `/api/pdf/*`
 - Audio endpoints: `/api/audio/*` (convert, compress, trim, merge, denoise, separate)
+- Tools endpoints: `POST /api/tools/markdown`, `POST /api/tools/shorten`, `GET /r/{code}`
 
 ## Tests
 
