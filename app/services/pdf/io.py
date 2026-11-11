@@ -50,13 +50,6 @@ def write_writer(writer: PdfWriter, out_path: Path) -> Path:
     return out_path
 
 
-def copy_pages(reader: PdfReader, writer: PdfWriter, indices: list[int] | None = None) -> None:
-    """Append pages from reader into writer. indices are 0-based."""
-    pages = reader.pages if indices is None else [reader.pages[i] for i in indices]
-    for page in pages:
-        writer.add_page(page)
-
-
 def out_name(stem: str, suffix: str, ext: str = ".pdf") -> str:
     """Build a safe output filename."""
     safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in stem)[:80] or "document"

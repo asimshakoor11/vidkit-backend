@@ -1,68 +1,40 @@
 # VidKit Backend
 
 FastAPI backend for [VidKit](../PROJECT.md) video, image, PDF, audio, and developer utility tools.
+Deployment (Render + Neon/Supabase): see [DEPLOYMENT.md](../DEPLOYMENT.md).
 
 > **Legal notice:** Only download or process content you own or have permission to use.
 > Respect platform Terms of Service and copyright law.
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.11+ (the Docker image uses 3.12)
 - FFmpeg and ffprobe on `PATH` (video + audio tools)
-- Node 18+ for the frontend (`vidkit-frontend`)
-- Optional for PDF tools (features skip/fail with a clear error if missing):
-  - **Ghostscript** — PDF compress
-  - **LibreOffice** (`soffice`) — PDF ↔ Word
-  - **Poppler** — PDF → JPG / OCR rendering (`pdf2image`)
-  - **Tesseract OCR** — searchable PDF OCR
-- Optional for vocal remover: **demucs** (`pip install demucs`) — first run downloads model weights; CPU works, GPU recommended
-- Optional for Markdown convert: **Pandoc** on `PATH` (PDF also needs a PDF engine such as pdflatex)
+- Optional system tools (each feature returns `DEPENDENCY_MISSING` if its tool is absent):
+  - **Ghostscript**: PDF compress
+  - **LibreOffice** (`soffice`): PDF ↔ Word
+  - **Poppler**: PDF → JPG / OCR rendering (`pdf2image`)
+  - **Tesseract OCR**: searchable PDF OCR
+  - **Pandoc**: Markdown convert (PDF output also needs a PDF engine such as pdflatex)
+  - **Deno**: JavaScript runtime yt-dlp uses for YouTube
+  - **demucs** (Python, pulls PyTorch): vocal remover; first run downloads model weights
 
-### Install FFmpeg (Windows)
+The [Dockerfile](Dockerfile) installs all of these. Locally you only need the ones for the tools you are working on.
+
+### Windows installs
 
 ```powershell
 winget install Gyan.FFmpeg
-# Restart the terminal, then:
-ffmpeg -version
-ffprobe -version
-```
-
-Or download a static build from [https://www.gyan.dev/ffmpeg/builds/](https://www.gyan.dev/ffmpeg/builds/) and add its `bin` folder to PATH.
-You can also set `FFMPEG_PATH` / `FFPROBE_PATH` in `.env`.
-
-### Install PDF binaries (Windows)
-
-```powershell
 winget install ArtifexSoftware.GhostScript
 winget install TheDocumentFoundation.LibreOffice
 winget install UB-Mannheim.TesseractOCR
+winget install JohnMacFarlane.Pandoc
+winget install DenoLand.Deno
 # Poppler: download a Windows build and set POPPLER_PATH to its bin folder
 ```
 
-Set paths in `.env` if they are not on `PATH`:
-
-```
-GS_PATH=gs
-LIBREOFFICE_PATH=soffice
-TESSERACT_PATH=tesseract
-POPPLER_PATH=C:\path\to\poppler\Library\bin
-AUDIO_SEPARATE_TIMEOUT_SEC=900
-PANDOC_PATH=pandoc
-MARKDOWN_TIMEOUT_SEC=120
-PUBLIC_BASE_URL=http://localhost:8000
-SHORT_URL_TTL_DAYS=30
-```
-
-On Windows Ghostscript is often `gswin64c` — the backend also looks for that automatically.
-
-### Install Pandoc (Windows)
-
-```powershell
-winget install JohnMacFarlane.Pandoc
-pandoc -v
-```
-
-PDF output needs a Pandoc PDF engine (e.g. a LaTeX distribution). HTML conversion works with Pandoc alone.
+Restart the terminal afterwards. If a tool is not on `PATH`, set its `*_PATH` variable in `.env`.
+On Windows Ghostscript is often `gswin64c`; the backend looks for that automatically.
 
 ## Setup
 
@@ -70,12 +42,13 @@ PDF output needs a Pandoc PDF engine (e.g. a LaTeX distribution). HTML conversio
 cd vidkit-backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements-dev.txt   # runtime deps + pytest
 Copy-Item .env.example .env
 alembic upgrade head
 ```
 
-Note: `demucs` pulls **PyTorch** and is large. If you only need FFmpeg audio tools, you can skip installing demucs and vocal separation will return `DEPENDENCY_MISSING`.
+`demucs` pulls **PyTorch** and is large. To skip it, install the other lines of `requirements.txt` only;
+the vocal remover then returns `DEPENDENCY_MISSING`.
 
 ## Run
 
@@ -83,17 +56,33 @@ Note: `demucs` pulls **PyTorch** and is large. If you only need FFmpeg audio too
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Health check:
+- Health check: `curl http://localhost:8000/api/health` (also reports ffmpeg / yt-dlp versions)
+- API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 
-```powershell
-curl http://localhost:8000/api/health
+Run **one** worker process. The job queue, progress, and cancel state live in-process
+([app/workers/runner.py](app/workers/runner.py)), so multiple workers or instances would not see each other's jobs.
+
+## Database
+
+| Environment | `DATABASE_URL` |
+|---|---|
+| Local | `sqlite:///./vidkit.db` (default) |
+| Neon / Supabase / Render Postgres | Paste the provider's `postgresql://...` URL as-is |
+
+Plain `postgres://` / `postgresql://` URLs are rewritten to the psycopg 3 driver (`postgresql+psycopg://`).
+Migrations run with `alembic upgrade head`; the Docker image runs this on every start.
+
+Tables: `jobs`, `job_files`, `short_urls`, `users` (scaffolded for future accounts, unused today).
+
+## Docker
+
+```bash
+docker build -t vidkit-api .                                   # default: no vocal remover, fits 512 MB hosts
+docker build --build-arg INSTALL_DEMUCS=true -t vidkit-api .   # adds Demucs/PyTorch (~1.5 GB, needs 2-4 GB RAM)
+docker run -p 8000:8000 --env-file .env vidkit-api
 ```
 
-API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
-
-- PDF endpoints: `/api/pdf/*`
-- Audio endpoints: `/api/audio/*` (convert, compress, trim, merge, denoise, separate)
-- Tools endpoints: `POST /api/tools/markdown`, `POST /api/tools/shorten`, `GET /r/{code}`
+The container listens on `$PORT` (default 8000) and trusts `X-Forwarded-For` from the host's proxy, so rate limits apply per real client IP.
 
 ## Tests
 
@@ -101,26 +90,20 @@ API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 pytest -q
 ```
 
-Splitter tests generate a short sample video with ffmpeg and are skipped if ffmpeg is missing.
-PDF compress tests skip when Ghostscript is missing.
-Audio FFmpeg tests skip when ffmpeg is missing.
+Splitter and audio tests skip when ffmpeg is missing; PDF compress tests skip when Ghostscript is missing.
 
 ## Updating yt-dlp
 
-Extractors break periodically:
+Extractors break periodically. Locally: `pip install -U "yt-dlp[default]"`. In production, redeploy
+(Render: Manual Deploy → *Clear build cache & deploy*) to pick up the latest release.
 
-```powershell
-pip install -U yt-dlp
-```
+For content that needs a login, set `YTDLP_COOKIES_FILE` to a Netscape-format cookies file.
 
-For Instagram/Facebook content that needs login, set `YTDLP_COOKIES_FILE` in `.env` to a Netscape cookies file.
+## API overview
 
-## Frontend
-
-In `vidkit-frontend/.env.local`:
-
-```
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
-```
-
-Then `npm run dev` (Next.js defaults to [http://localhost:3000](http://localhost:3000)).
+- Video: `/api/video/*`, `/api/split`, `/api/compress`, `/api/extract`, `/api/trim`, `/api/convert`, `/api/merge`, `/api/gif`, `/api/rotate`, `/api/resize`
+- Image: `/api/image/*`
+- PDF: `/api/pdf/*`
+- Audio: `/api/audio/*`
+- Tools: `POST /api/tools/markdown`, `POST /api/tools/shorten`, `GET /r/{code}`
+- Jobs and files: `/api/jobs/{id}`, `/api/jobs/{id}/events` (SSE), `/api/jobs/{id}/zip`, `/api/files/{id}/download`

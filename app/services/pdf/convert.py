@@ -37,6 +37,8 @@ def _run_soffice(input_path: Path, out_dir: Path, convert_to: str) -> Path:
             "--nologo",
             "--nofirststartwizard",
             "--norestore",
+            # Without this, LibreOffice opens PDFs in Draw, which cannot export .docx.
+            *(["--infilter=writer_pdf_import"] if work_in.suffix.lower() == ".pdf" else []),
             "--convert-to",
             convert_to,
             "--outdir",

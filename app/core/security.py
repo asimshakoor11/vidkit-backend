@@ -37,15 +37,6 @@ PLATFORM_DOMAINS: dict[str, tuple[str, ...]] = {
 }
 
 ALLOWED_UPLOAD_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
-ALLOWED_UPLOAD_MIMES = {
-    "video/mp4",
-    "video/quicktime",
-    "video/x-matroska",
-    "video/webm",
-    "video/x-msvideo",
-    "video/avi",
-    "application/octet-stream",
-}
 
 ALLOWED_IMAGE_EXTENSIONS = {
     ".jpg",
@@ -61,7 +52,6 @@ ALLOWED_IMAGE_EXTENSIONS = {
 ALLOWED_PDF_EXTENSIONS = {".pdf"}
 ALLOWED_IMAGE_OR_PDF_EXTENSIONS = ALLOWED_IMAGE_EXTENSIONS | ALLOWED_PDF_EXTENSIONS
 ALLOWED_DOC_EXTENSIONS = {".docx"}
-ALLOWED_DOC_OR_PDF_EXTENSIONS = ALLOWED_DOC_EXTENSIONS | ALLOWED_PDF_EXTENSIONS
 ALLOWED_AUDIO_EXTENSIONS = {".mp3", ".wav", ".aac", ".m4a", ".flac", ".ogg", ".opus"}
 
 _UNSAFE_FILENAME = re.compile(r"[^\w.\-]+", re.UNICODE)

@@ -9,7 +9,7 @@ from sqlalchemy import engine_from_config, pool
 
 from app.core.config import get_settings
 from app.core.database import Base
-from app.models import Job, JobFile, User  # noqa: F401
+from app.models import Job, JobFile, ShortUrl, User  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:
@@ -17,7 +17,8 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 settings = get_settings()
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Escape "%" (URL-encoded passwords) for configparser interpolation.
+config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 
 
 def run_migrations_offline() -> None:

@@ -18,12 +18,17 @@ class Base(DeclarativeBase):
 def _make_engine() -> Engine:
     settings = get_settings()
     connect_args: dict[str, object] = {}
+    engine_kwargs: dict[str, object] = {}
     if settings.database_url.startswith("sqlite"):
         connect_args["check_same_thread"] = False
+    else:
+        # Hosted Postgres (Neon, Supabase) drops idle connections; check before use.
+        engine_kwargs.update(pool_pre_ping=True, pool_recycle=300, pool_size=5, max_overflow=5)
     engine = create_engine(
         settings.database_url,
         connect_args=connect_args,
         future=True,
+        **engine_kwargs,
     )
 
     if settings.database_url.startswith("sqlite"):

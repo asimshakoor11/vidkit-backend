@@ -58,10 +58,6 @@ _ffmpeg_trackers: dict[str, FfmpegProcess] = {}
 _split_trackers = _ffmpeg_trackers  # alias
 
 
-def get_split_tracker(job_id: str) -> FfmpegProcess | None:
-    return _ffmpeg_trackers.get(job_id)
-
-
 def _mime_for_path(path: Path) -> str:
     ext = path.suffix.lower()
     mapped = {
