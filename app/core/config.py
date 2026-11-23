@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     markdown_timeout_sec: int = 120
     public_base_url: str = "http://localhost:8000"
     short_url_ttl_days: int = 30
+    jwt_secret: str = "vidkit-default-dev-secret-change-in-production-1234567890"
+    jwt_expire_minutes: int = 180
+    owner_email: str | None = None
+
 
     @field_validator("database_url")
     @classmethod

@@ -20,10 +20,20 @@ os.environ.setdefault("CORS_ORIGINS", "http://localhost:3000")
 
 from app.core.config import get_settings
 from app.core.database import Base, get_db
+from app.core.rate_limit import limiter
 from app.main import app
 from app.services.storage import ensure_storage_dirs
 
 get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def reset_limiter():
+    """Reset SlowAPI in-memory storage between tests."""
+    limiter.reset()
+    yield
+    limiter.reset()
+
 
 
 @pytest.fixture()

@@ -5,7 +5,163 @@ from __future__ import annotations
 import ipaddress
 import re
 import socket
+import hmac
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
+from typing import Any
+
+import jwt
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHashError
+from fastapi import Request, Depends
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.config import get_settings
+from app.core.database import get_db
+from app.core.errors import AppError
+from app.models.user import User
+
+_hasher = PasswordHasher()
+
+
+def hash_password(password: str) -> str:
+    """Hash a plain text password using Argon2id."""
+    return _hasher.hash(password)
+
+
+def verify_password(password: str, hashed: str | None) -> bool:
+    """Verify password against Argon2 hash, safe against empty or invalid hashes."""
+    if not hashed:
+        return False
+    try:
+        return _hasher.verify(hashed, password)
+    except (VerifyMismatchError, VerificationError, InvalidHashError):
+        return False
+
+
+def create_access_token(
+    user_id: str, email: str, expires_delta: timedelta | None = None
+) -> tuple[str, int]:
+    """
+    Generate HS256 JWT access token with claims sub, email, iat, exp.
+    Returns (token, expires_in_seconds).
+    """
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+    delta = expires_delta or timedelta(minutes=settings.jwt_expire_minutes)
+    exp = now + delta
+    payload = {
+        "sub": str(user_id),
+        "email": email.strip().lower(),
+        "iat": int(now.timestamp()),
+        "exp": int(exp.timestamp()),
+    }
+    token = jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+    expires_in = int(delta.total_seconds())
+    return token, expires_in
+
+
+def is_owner(user_or_claims: Any) -> bool:
+    """
+    True only if OWNER_EMAIL is set and the email matches it
+    (case-insensitive, compared with hmac.compare_digest).
+    """
+    settings = get_settings()
+    if not settings.owner_email or not settings.owner_email.strip():
+        return False
+    
+    email = None
+    if isinstance(user_or_claims, dict):
+        email = user_or_claims.get("email")
+    elif hasattr(user_or_claims, "email"):
+        email = getattr(user_or_claims, "email")
+    elif isinstance(user_or_claims, str):
+        email = user_or_claims
+
+    if not email or not isinstance(email, str):
+        return False
+
+    return hmac.compare_digest(email.strip().lower(), settings.owner_email.strip().lower())
+
+
+def extract_bearer_token(request: Request) -> str | None:
+    """Extract bearer token from Authorization header."""
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
+        return None
+    parts = auth_header.strip().split()
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1]
+    return None
+
+
+def get_current_user_optional(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> User | None:
+    """
+    Returns the user or None.
+    Never raises for a missing, invalid or expired token.
+    """
+    token = extract_bearer_token(request)
+    if not token:
+        return None
+    settings = get_settings()
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=["HS256"],
+            options={"require": ["exp", "sub", "iat"]},
+        )
+    except Exception:
+        return None
+
+    user_id = payload.get("sub")
+    if not user_id:
+        return None
+
+    user = db.scalar(select(User).where(User.id == str(user_id)))
+    if not user or not user.is_active:
+        return None
+    return user
+
+
+def get_current_user(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> User:
+    """
+    Raises 401 if not authenticated.
+    When expired, returns 401 with code TOKEN_EXPIRED;
+    Other invalid or missing tokens return 401 with code UNAUTHORIZED.
+    """
+    token = extract_bearer_token(request)
+    if not token:
+        raise AppError("UNAUTHORIZED", "Authentication required.", status_code=401)
+    settings = get_settings()
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=["HS256"],
+            options={"require": ["exp", "sub", "iat"]},
+        )
+    except jwt.ExpiredSignatureError:
+        raise AppError("TOKEN_EXPIRED", "Token has expired.", status_code=401)
+    except Exception:
+        raise AppError("UNAUTHORIZED", "Invalid token.", status_code=401)
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise AppError("UNAUTHORIZED", "Invalid token subject.", status_code=401)
+
+    user = db.scalar(select(User).where(User.id == str(user_id)))
+    if not user or not user.is_active:
+        raise AppError("UNAUTHORIZED", "User not found or inactive.", status_code=401)
+    return user
+
 
 from app.core.errors import AppError
 

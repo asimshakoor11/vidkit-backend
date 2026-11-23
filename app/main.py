@@ -16,8 +16,10 @@ from app.core.database import SessionLocal
 from app.core.errors import error_body, register_exception_handlers
 from app.core.logging import get_logger, setup_logging
 from app.core.rate_limit import limiter
+from app.models.user import User
 from app.routers import (
     audio,
+    auth,
     compress,
     convert,
     extract,
@@ -35,6 +37,7 @@ from app.routers import (
     trim,
     video,
 )
+
 from app.services.job_service import mark_stale_processing_jobs
 from app.services.storage import ensure_storage_dirs
 from app.workers.cleanup import start_cleanup_scheduler, stop_cleanup_scheduler
@@ -56,10 +59,22 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         stale = mark_stale_processing_jobs(db)
         if stale:
             logger.info("marked_stale_jobs", count=stale)
+
+        # Owner safety warning if OWNER_EMAIL is configured but not registered yet
+        if settings.owner_email and settings.owner_email.strip():
+            from sqlalchemy import select
+            owner = db.scalar(select(User).where(User.email == settings.owner_email.strip().lower()))
+            if not owner:
+                logger.warning(
+                    "owner_not_registered",
+                    owner_email=settings.owner_email.strip().lower(),
+                    message="OWNER_EMAIL is configured but no account with this email exists yet. Please sign up immediately to claim the owner account.",
+                )
     except Exception:  # noqa: BLE001
-        logger.warning("stale_job_check_skipped")
+        logger.warning("startup_check_skipped")
     finally:
         db.close()
+
 
     disable_bg = os.environ.get("VIDKIT_DISABLE_SCHEDULER") == "1"
     if not disable_bg:
@@ -107,7 +122,9 @@ async def rate_limit_handler(_request: Request, _exc: RateLimitExceeded) -> JSON
 
 
 app.include_router(health.router)
+app.include_router(auth.router)
 app.include_router(video.router)
+
 app.include_router(split.router)
 app.include_router(compress.router)
 app.include_router(extract.router)

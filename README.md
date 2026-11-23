@@ -72,7 +72,23 @@ Run **one** worker process. The job queue, progress, and cancel state live in-pr
 Plain `postgres://` / `postgresql://` URLs are rewritten to the psycopg 3 driver (`postgresql+psycopg://`).
 Migrations run with `alembic upgrade head`; the Docker image runs this on every start.
 
-Tables: `jobs`, `job_files`, `short_urls`, `users` (scaffolded for future accounts, unused today).
+Tables: `jobs`, `job_files`, `short_urls`, `users`.
+
+## Authentication and owner bypass
+
+VidKit supports optional authentication. Anonymous users retain full access to all tools, and signing up is optional. When an owner logs in (configured via `OWNER_EMAIL`), their requests bypass rate limits.
+
+### Setup Steps
+1. Generate a strong random `JWT_SECRET`:
+   ```bash
+   python -c "import secrets; print(secrets.token_urlsafe(48))"
+   ```
+2. Configure `.env`:
+   - `JWT_SECRET`: The generated random string (required).
+   - `JWT_EXPIRE_MINUTES`: Token lifetime in minutes (default `180`, i.e. 3 hours).
+   - `OWNER_EMAIL`: The owner's email address (e.g. `owner@example.com`).
+3. **Owner safety note**: Because there is no email verification, the owner **must sign up FIRST**, right after deployment, before sharing the URL publicly. The backend logs a warning on startup if `OWNER_EMAIL` is configured but no account with that email exists yet.
+
 
 ## Docker
 
