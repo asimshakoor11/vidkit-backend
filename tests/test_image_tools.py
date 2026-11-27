@@ -116,6 +116,23 @@ def test_api_image_compress_accepts(client, tmp_path: Path) -> None:
     assert res.json()["job_id"]
 
 
+def test_api_image_compress_bulk_accepts(client, tmp_path: Path) -> None:
+    src1 = _png(tmp_path, name="first.png")
+    src2 = _png(tmp_path, name="second.png")
+    with src1.open("rb") as f1, src2.open("rb") as f2:
+        res = client.post(
+            "/api/image/compress",
+            files=[
+                ("files", ("first.png", f1, "image/png")),
+                ("files", ("second.png", f2, "image/png")),
+            ],
+            data={"preset": "balanced"},
+        )
+    assert res.status_code == 202, res.text
+    assert res.json()["job_id"]
+
+
+
 def test_api_image_convert_accepts(client, tmp_path: Path) -> None:
     src = _png(tmp_path)
     with src.open("rb") as fh:

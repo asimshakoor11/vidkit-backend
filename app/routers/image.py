@@ -15,7 +15,7 @@ from app.routers.common import client_id
 from app.schemas import image as img_schema
 from app.schemas.video import JobCreatedResponse
 from app.services.job_service import add_job_file, create_job
-from app.services.upload import save_image_upload
+from app.services.upload import save_image_upload, save_image_uploads
 from app.workers.runner import runner
 from app.workers import tasks as image_tasks
 
@@ -40,21 +40,42 @@ def _register_input(db: Session, job_id: str, uploaded) -> None:
 @limiter.limit(settings.rate_limit_jobs)
 async def compress_endpoint(
     request: Request,
-    file: UploadFile = File(...),
+    file: UploadFile | None = File(None),
+    files: list[UploadFile] | None = File(None),
     preset: str = Form("balanced"),
     db: Session = Depends(get_db),
 ) -> JobCreatedResponse:
     if preset not in img_schema.COMPRESS_PRESETS:
         raise AppError("UNSUPPORTED_FORMAT", "Preset must be high, balanced, or small.")
-    job = create_job(db, job_type="img_compress", params={"preset": preset}, client_id=client_id(request))
-    uploaded = await save_image_upload(file, job.id)
-    _register_input(db, job.id, uploaded)
+
+    # Collect uploads from both 'files' (bulk) or 'file' (single backwards compat)
+    upload_list: list[UploadFile] = []
+    if files:
+        upload_list.extend([f for f in files if f.filename])
+    if file and file.filename:
+        upload_list.append(file)
+
+    if not upload_list:
+        raise AppError("UNSUPPORTED_FORMAT", "Please upload at least one image file.")
+
+    job = create_job(
+        db,
+        job_type="img_compress",
+        params={"preset": preset, "count": len(upload_list)},
+        client_id=client_id(request),
+    )
+    uploaded_items = await save_image_uploads(upload_list, job.id)
+    for u in uploaded_items:
+        _register_input(db, job.id, u)
+
+    paths = [u.path for u in uploaded_items]
 
     async def _factory() -> None:
-        await image_tasks.run_img_compress_job(job.id, uploaded.path, preset)
+        await image_tasks.run_img_compress_job(job.id, paths, preset)
 
     await runner.submit(job.id, _factory)
     return JobCreatedResponse(job_id=job.id, status="queued")
+
 
 
 @router.post("/target-size", response_model=JobCreatedResponse, status_code=202)

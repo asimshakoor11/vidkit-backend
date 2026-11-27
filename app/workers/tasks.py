@@ -656,6 +656,11 @@ async def _run_file_job(
             return
 
         paths = result if isinstance(result, list) else [result]
+        # Look up input files for nicer output naming
+        from app.models.job import Job
+        job_record = db.get(Job, job_id)
+        input_files = [f for f in job_record.files if f.role == "input"] if job_record else []
+
         for index, path in enumerate(paths, start=1):
             width = height = None
             if path.suffix.lower() in {
@@ -678,17 +683,25 @@ async def _run_file_job(
                 except Exception:  # noqa: BLE001
                     pass
 
+            # Determine human-friendly original name
+            if len(paths) == len(input_files):
+                in_name = Path(input_files[index - 1].original_name).stem
+                out_name = f"{in_name}_compressed{path.suffix.lower()}"
+            else:
+                out_name = path.name
+
             add_job_file(
                 db,
                 job_id=job_id,
                 role="output",
                 absolute_path=path,
-                original_name=path.name,
+                original_name=out_name,
                 part_index=index,
                 mime_type=_mime_for_path(path),
                 width=width,
                 height=height,
             )
+
 
         update_job_progress(db, job_id, status="completed", stage="packaging", progress=100)
         logger.info("file_job_completed", job_id=job_id, outputs=len(paths))
@@ -719,13 +732,38 @@ async def _run_file_job(
 _run_image_job = _run_file_job
 
 
-async def run_img_compress_job(job_id: str, input_path: Path, preset: str) -> None:
+async def run_img_compress_job(job_id: str, paths: list[Path] | Path, preset: str) -> None:
     out_dir = job_output_dir(job_id)
+    input_paths = [paths] if isinstance(paths, Path) else paths
 
-    def work(on_progress: Callable[[float, str], None]) -> Path:
-        return img_compress.compress_image(input_path, out_dir, preset, on_progress)
+    def work(on_progress: Callable[[float, str], None]) -> list[Path]:
+        results: list[Path] = []
+        total = len(input_paths)
+        for i, p in enumerate(input_paths):
+            def file_progress(pct: float, stage: str) -> None:
+                overall = ((i + (pct / 100.0)) / total) * 100.0
+                on_progress(overall, f"compressing ({i + 1}/{total})")
+
+            # Unique filename in case multiple inputs have same stem
+            fmt = img_compress.detect_fmt(p)
+            ext = fmt if fmt in {"png", "webp", "avif"} else "jpg"
+            out_file = out_dir / f"{p.stem}_{i + 1}_compressed.{ext}" if total > 1 else out_dir / f"{p.stem}_compressed.{ext}"
+            
+            # Use compress_image logic but target out_file
+            quality = img_compress.QUALITY_PRESETS[preset]
+            out_dir.mkdir(parents=True, exist_ok=True)
+            img = img_compress.open_image(p)
+            file_progress(30, "compressing")
+            if ext == "png":
+                img_compress.save_image(img, out_file, fmt="png", optimize=True)
+            else:
+                img_compress.save_image(img, out_file, fmt=ext, quality=quality)
+            file_progress(100, "done")
+            results.append(out_file)
+        return results
 
     await _run_image_job(job_id, work)
+
 
 
 async def run_img_target_job(job_id: str, input_path: Path, kb: int) -> None:

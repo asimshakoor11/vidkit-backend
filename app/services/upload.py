@@ -188,6 +188,41 @@ async def save_image_upload(
     )
 
 
+async def save_image_uploads(
+    files: list[UploadFile],
+    job_id: str,
+    *,
+    allow_pdf: bool = False,
+    max_files: int = 50,
+) -> list[ImageUpload]:
+    """Save multiple image uploads; enforces max file count and total size."""
+    if not files:
+        raise AppError("UNSUPPORTED_FORMAT", "Please upload at least one image file.")
+    if len(files) > max_files:
+        raise AppError("FILE_TOO_LARGE", f"You can upload at most {max_files} files.")
+
+    settings = get_settings()
+    saved: list[ImageUpload] = []
+    total_bytes = 0
+    for index, file in enumerate(files):
+        item = await save_image_upload(
+            file,
+            job_id,
+            allow_pdf=allow_pdf,
+            filename_stem="input",
+            index=index,
+        )
+        total_bytes += item.path.stat().st_size
+        if total_bytes > settings.max_upload_bytes:
+            raise AppError(
+                "FILE_TOO_LARGE",
+                f"Total upload exceeds the {settings.max_upload_mb} MB limit.",
+            )
+        saved.append(item)
+    return saved
+
+
+
 async def _stream_upload(
     file: UploadFile,
     dest: Path,
